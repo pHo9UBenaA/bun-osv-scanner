@@ -33,7 +33,7 @@ export type OsvApiQueryRequestBody = {
  * Represents the vulnerability container returned by POST /v1/query.
  */
 export type OsvApiQueryResponseBody = {
-	readonly vulns: ReadonlyArray<OsvVulnerability>;
+	readonly vulns: ReadonlyArray<OsvVulnerability> | null;
 	readonly next_page_token?: string;
 };
 
@@ -61,7 +61,7 @@ export type OsvApiQueryBatchVulnerability = {
  * Represents an individual query result within POST /v1/querybatch responses.
  */
 export type OsvApiQueryBatchResult = {
-	readonly vulns: ReadonlyArray<OsvApiQueryBatchVulnerability>;
+	readonly vulns: ReadonlyArray<OsvApiQueryBatchVulnerability> | null;
 	readonly next_page_token?: string;
 };
 

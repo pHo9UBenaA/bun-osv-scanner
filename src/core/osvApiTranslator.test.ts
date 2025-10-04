@@ -35,7 +35,7 @@ describe("osvApiTranslator", () => {
 					next_page_token: "token-1",
 				},
 				{
-					vulns: [],
+					vulns: null,
 				},
 			],
 		};

@@ -50,6 +50,11 @@ export type SecurityService = {
 	) => Promise<
 		Result<ReadonlyArray<Bun.Security.Advisory>, SecurityServiceError>
 	>;
+	readonly scanCoordinates: (
+		coordinates: ReadonlyArray<DependencyCoordinate>,
+	) => Promise<
+		Result<ReadonlyArray<Bun.Security.Advisory>, SecurityServiceError>
+	>;
 };
 
 /**
@@ -62,6 +67,36 @@ export const createSecurityService = (
 		dependencies.serializeSbom ??
 		(JSON.stringify as (doc: SbomDocument) => string);
 
+	const executeScan = async (
+		coordinates: ReadonlyArray<DependencyCoordinate>,
+	): Promise<
+		Result<ReadonlyArray<Bun.Security.Advisory>, SecurityServiceError>
+	> => {
+		const sbomDocument = dependencies.generateSbom(coordinates);
+
+		let sbomJson: string;
+		try {
+			sbomJson = serialize(sbomDocument);
+		} catch (cause) {
+			return err({
+				type: "sbom-serialization-error",
+				message: (cause as Error).message,
+			});
+		}
+
+		const scanResult = await dependencies.osvScanner.scan(sbomJson);
+		if (!scanResult.ok) {
+			return err({ type: "osv-scan-error", error: scanResult.error });
+		}
+
+		const advisories = buildAdvisories(
+			scanResult.data,
+			dependencies.classifySeverity,
+		);
+
+		return ok(advisories);
+	};
+
 	return {
 		async scan(lock) {
 			const parsed = dependencies.parseLock(lock);
@@ -69,29 +104,10 @@ export const createSecurityService = (
 				return err({ type: "lock-parse-error", error: parsed.error });
 			}
 
-			const sbomDocument = dependencies.generateSbom(parsed.data);
-
-			let sbomJson: string;
-			try {
-				sbomJson = serialize(sbomDocument);
-			} catch (cause) {
-				return err({
-					type: "sbom-serialization-error",
-					message: (cause as Error).message,
-				});
-			}
-
-			const scanResult = await dependencies.osvScanner.scan(sbomJson);
-			if (!scanResult.ok) {
-				return err({ type: "osv-scan-error", error: scanResult.error });
-			}
-
-			const advisories = buildAdvisories(
-				scanResult.data,
-				dependencies.classifySeverity,
-			);
-
-			return ok(advisories);
+			return executeScan(parsed.data);
+		},
+		scanCoordinates(coordinates) {
+			return executeScan(coordinates);
 		},
 	};
 };

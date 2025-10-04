@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, test } from "bun:test";
 import type { SecurityService } from "../app/securityService";
 import {
@@ -10,14 +14,29 @@ import {
 	SCANNER_MODE_REST,
 	type ScannerRuntimeConfig,
 } from "../ports/scannerConfigPort";
+import type { DependencyCoordinate } from "../types/dependency";
 import { err, ok } from "../types/result";
 import { createScanner } from "./scanner";
 
 const createStubService = (
-	result: Awaited<ReturnType<SecurityService["scan"]>>,
+	lockResult: Awaited<ReturnType<SecurityService["scan"]>>,
+	coordinatesResult?: Awaited<ReturnType<SecurityService["scanCoordinates"]>>,
 ): SecurityService => ({
-	scan: async () => result,
+	scan: async () => lockResult,
+	scanCoordinates: async () => coordinatesResult ?? lockResult,
 });
+
+const writePackageManifest = async (
+	directory: string,
+	manifest: { readonly name: string; readonly version: string },
+) => {
+	await mkdir(directory, { recursive: true });
+	await writeFile(
+		join(directory, "package.json"),
+		JSON.stringify(manifest),
+		"utf8",
+	);
+};
 
 describe("scanner", () => {
 	test("returns advisories from security service", async () => {
@@ -77,6 +96,105 @@ describe("scanner", () => {
 				description: "Failed to read bun.lock: boom",
 			},
 		]);
+	});
+
+	test("resolves dependencies when bun.lock is missing", async () => {
+		const coordinates = [
+			{ ecosystem: "npm", name: "left-pad", version: "1.3.0" },
+		];
+		const capturedRequests: ReadonlyArray<Bun.Security.Package>[] = [];
+		const scanner = createScanner({
+			readLock: async () => err({ type: "lock-not-found" }),
+			resolveDependencies: async ({ packages }) => {
+				capturedRequests.push(packages);
+				return ok(coordinates);
+			},
+			securityService: createStubService(
+				err({
+					type: "osv-scan-error",
+					error: { type: "network-error", message: "x" },
+				}),
+				ok([
+					{
+						level: "warn",
+						package: "left-pad",
+						url: null,
+						description: "weak",
+					},
+				]),
+			),
+		});
+
+		const advisories = await scanner.scan({
+			packages: [{ name: "left-pad", version: "^1.3.0" }],
+		});
+
+		expect(capturedRequests).toEqual([
+			[{ name: "left-pad", version: "^1.3.0" }],
+		]);
+		expect(advisories).toEqual([
+			{
+				level: "warn",
+				package: "left-pad",
+				url: null,
+				description: "weak",
+			},
+		]);
+	});
+
+	test("default resolver scans node_modules when bun.lock is missing", async () => {
+		const workspace = await mkdtemp(join(tmpdir(), "scanner-node-modules-"));
+		const nodeModules = join(workspace, "node_modules");
+		await writePackageManifest(join(nodeModules, "alpha"), {
+			name: "alpha",
+			version: "1.0.0",
+		});
+		await writePackageManifest(join(nodeModules, "@scope", "beta"), {
+			name: "@scope/beta",
+			version: "2.0.0",
+		});
+		await writePackageManifest(
+			join(nodeModules, "alpha", "node_modules", "gamma"),
+			{
+				name: "gamma",
+				version: "0.1.0",
+			},
+		);
+
+		const originalCwd = process.cwd();
+		process.chdir(workspace);
+
+		try {
+			let captured: ReadonlyArray<DependencyCoordinate> | null = null;
+			const scanner = createScanner({
+				readLock: async () => err({ type: "lock-not-found" }),
+				securityService: {
+					async scan() {
+						throw new Error("scan should not be called");
+					},
+					async scanCoordinates(coords) {
+						captured = coords;
+						return ok([]);
+					},
+				},
+			});
+
+			const advisories = await scanner.scan({
+				packages: [{ name: "alpha", version: "^1.0.0" }],
+			});
+
+			expect(advisories).toEqual([]);
+			expect(captured).not.toBeNull();
+			const actual: DependencyCoordinate[] = captured ? [...captured] : [];
+			expect(actual).toEqual([
+				{ ecosystem: "npm", name: "@scope/beta", version: "2.0.0" },
+				{ ecosystem: "npm", name: "alpha", version: "1.0.0" },
+				{ ecosystem: "npm", name: "gamma", version: "0.1.0" },
+			]);
+		} finally {
+			process.chdir(originalCwd);
+			await rm(workspace, { recursive: true, force: true });
+		}
 	});
 
 	test("returns fatal advisory when service fails", async () => {

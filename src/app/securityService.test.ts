@@ -49,6 +49,35 @@ describe("createSecurityService", () => {
 		]);
 	});
 
+	test("scanCoordinates skips lock parsing and returns advisories", async () => {
+		const fixture = (await loadFixture(
+			"fixtures/osv/event-stream-osv.json",
+		)) as OsvScanResultsBody;
+
+		let parseLockCalls = 0;
+		const service = createSecurityService({
+			parseLock: () => {
+				parseLockCalls += 1;
+				return ok([]);
+			},
+			generateSbom: generateCycloneDxSbom,
+			classifySeverity: classifyPackageSeverity,
+			osvScanner: {
+				scan: async () => ok(fixture as any),
+			},
+		});
+
+		const result = await service.scanCoordinates([
+			{ ecosystem: "npm", name: "event-stream", version: "3.3.6" },
+		]);
+
+		expect(parseLockCalls).toBe(0);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+
+		expect(result.data[0]?.package).toBe("event-stream");
+	});
+
 	test("propagates lock parse errors", async () => {
 		const service = createSecurityService({
 			parseLock: () => err(PARSE_ERROR_INVALID_DOCUMENT),

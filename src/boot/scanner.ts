@@ -2,6 +2,10 @@
  * @file Bootstraps the Bun security scanner with real adapters.
  */
 
+import type { Dirent } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { configureScanner } from "../app/configureScanner";
 import {
 	createSecurityService,
@@ -20,20 +24,31 @@ import {
 	type ParseScannerCliArgsError,
 	parseScannerCliArgs,
 } from "../foundation/cliArgs";
+import { parseLenientJson } from "../foundation/lenientJson";
+import type {
+	DependencyResolver,
+	ResolveDependenciesError,
+} from "../ports/dependencyResolverPort";
 import type { OsvScannerError, OsvScannerPort } from "../ports/osvScannerPort";
 import {
 	SCANNER_MODE_REST,
 	type ScannerRuntimeConfig,
 } from "../ports/scannerConfigPort";
+import {
+	DEPENDENCY_ECOSYSTEM_NPM,
+	type DependencyCoordinate,
+} from "../types/dependency";
 import { err, ok, type Result } from "../types/result";
 
 /**
  * Error emitted when the lockfile cannot be read.
  */
-export type LockReadError = {
-	readonly type: "lock-read-error";
-	readonly message: string;
-};
+export type LockReadError =
+	| {
+			readonly type: "lock-read-error";
+			readonly message: string;
+	  }
+	| { readonly type: "lock-not-found" };
 
 /**
  * Represents the result of attempting to load the Bun lockfile contents.
@@ -49,10 +64,21 @@ export type LockReader = () => Promise<LockReadResult>;
  * Default implementation of the lock reader that loads `bun.lock` from disk.
  */
 const defaultReadLock: LockReader = async () => {
+	const file = Bun.file("bun.lock");
+	if (!(await file.exists())) {
+		return err({ type: "lock-not-found" });
+	}
+
 	try {
-		const file = Bun.file("bun.lock");
 		const text = await file.text();
-		return ok(JSON.parse(text));
+		const parsed = parseLenientJson(text);
+		if (!parsed.ok) {
+			return err({
+				type: "lock-read-error",
+				message: parsed.error,
+			});
+		}
+		return ok(parsed.data);
 	} catch (cause) {
 		return err({
 			type: "lock-read-error",
@@ -62,12 +88,93 @@ const defaultReadLock: LockReader = async () => {
 };
 
 /**
+ * Default resolver placeholder that reports missing configuration.
+ */
+const NODE_MODULES_DIRECTORY = "node_modules" as const;
+const PACKAGE_MANIFEST_FILENAME = "package.json" as const;
+
+const defaultResolveDependencies: DependencyResolver = async ({ packages }) => {
+	void packages;
+	const root = NODE_MODULES_DIRECTORY;
+	const pending: string[] = [root];
+	const visited = new Set<string>();
+	const seen = new Set<string>();
+	const coordinates: DependencyCoordinate[] = [];
+
+	while (pending.length > 0) {
+		const directory = pending.pop();
+		if (!directory || visited.has(directory)) {
+			continue;
+		}
+		visited.add(directory);
+
+		let entries: Array<Dirent>;
+		try {
+			entries = await readdir(directory, { withFileTypes: true });
+		} catch (cause) {
+			if (directory === root) {
+				return err({
+					type: "manifest-read-error",
+					message: describeDirectoryReadError(directory, cause),
+				});
+			}
+			continue;
+		}
+
+		const manifestResult = await readCoordinateFromDirectory(directory);
+		if (!manifestResult.ok) {
+			return err({
+				type: "dependency-resolution-error",
+				message: manifestResult.error,
+			});
+		}
+
+		const coordinate = manifestResult.data;
+		if (coordinate) {
+			const key = `${coordinate.name}@${coordinate.version}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				coordinates.push(coordinate);
+			}
+		}
+
+		for (const entry of entries) {
+			if (entry.isSymbolicLink() || !entry.isDirectory()) {
+				continue;
+			}
+			const nextDirectory = join(directory, entry.name.toString());
+			if (!visited.has(nextDirectory)) {
+				pending.push(nextDirectory);
+			}
+		}
+	}
+
+	if (coordinates.length === 0) {
+		return err({
+			type: "dependency-resolution-error",
+			message: "No installed dependencies were found under node_modules",
+		});
+	}
+
+	const ordered = [...coordinates].sort((left, right) => {
+		const nameComparison = left.name.localeCompare(right.name);
+		if (nameComparison !== 0) {
+			return nameComparison;
+		}
+		return left.version.localeCompare(right.version);
+	});
+
+	return ok(ordered);
+};
+
+/**
  * Options accepted when constructing the scanner.
  */
 export type CreateScannerOptions = {
 	readonly readLock?: LockReader;
 	readonly securityService?: SecurityService;
 	readonly osvScanner?: OsvScannerPort;
+	readonly resolveDependencies?: DependencyResolver;
 	readonly argv?: ReadonlyArray<string>;
 	readonly parseArgs?: (
 		argv: ReadonlyArray<string>,
@@ -81,6 +188,18 @@ export type CreateScannerOptions = {
 const buildFatalAdvisory = (message: string): Bun.Security.Advisory => ({
 	level: ADVISORY_LEVEL_FATAL,
 	package: "bun.lock",
+	url: null,
+	description: message,
+});
+
+/**
+ * Produce a human-readable fatal advisory for manifest-related failures.
+ */
+const buildManifestFatalAdvisory = (
+	message: string,
+): Bun.Security.Advisory => ({
+	level: ADVISORY_LEVEL_FATAL,
+	package: "package.json",
 	url: null,
 	description: message,
 });
@@ -105,6 +224,8 @@ export const createScanner = (
 		((config: ScannerRuntimeConfig) => configureScanner(config));
 
 	const osvScanner = options.osvScanner ?? configure(runtimeConfig);
+	const resolveDependencies =
+		options.resolveDependencies ?? defaultResolveDependencies;
 	const securityService =
 		options.securityService ??
 		createSecurityService({
@@ -131,6 +252,31 @@ export const createScanner = (
 
 			const lockResult = await readLock();
 			if (!lockResult.ok) {
+				if (lockResult.error.type === "lock-not-found") {
+					const resolved = await resolveDependencies({ packages });
+					if (!resolved.ok) {
+						return [
+							buildManifestFatalAdvisory(
+								`Failed to resolve dependencies: ${describeResolveDependenciesError(
+									resolved.error,
+								)}`,
+							),
+						];
+					}
+
+					const advisoriesFromCoordinates =
+						await securityService.scanCoordinates(resolved.data);
+					if (!advisoriesFromCoordinates.ok) {
+						return [
+							buildManifestFatalAdvisory(
+								describeServiceError(advisoriesFromCoordinates.error),
+							),
+						];
+					}
+
+					return advisoriesFromCoordinates.data;
+				}
+
 				return [
 					buildFatalAdvisory(
 						`Failed to read bun.lock: ${lockResult.error.message}`,
@@ -162,6 +308,87 @@ const describeServiceError = (error: SecurityServiceError): string => {
 		case "osv-scan-error":
 			return `OSV scanner failed: ${describeOsvScannerError(error.error)}`;
 	}
+};
+
+/**
+ * Convert dependency resolution errors into readable descriptions.
+ */
+const describeResolveDependenciesError = (
+	error: ResolveDependenciesError,
+): string => {
+	switch (error.type) {
+		case "manifest-read-error":
+			return error.message;
+		case "dependency-resolution-error":
+			return error.message;
+	}
+};
+
+/**
+ * Describe filesystem access errors encountered while reading dependency directories.
+ */
+const describeDirectoryReadError = (
+	directory: string,
+	cause: unknown,
+): string => {
+	const error = cause as NodeJS.ErrnoException | undefined;
+	if (error?.code === "ENOENT") {
+		return `${directory} not found. Run \`bun install\` to install dependencies.`;
+	}
+	return error?.message ?? `Failed to read ${directory}`;
+};
+
+/**
+ * Read a dependency coordinate from the package manifest located in the directory.
+ */
+const readCoordinateFromDirectory = async (
+	directory: string,
+): Promise<Result<DependencyCoordinate | null, string>> => {
+	const manifestPath = join(directory, PACKAGE_MANIFEST_FILENAME);
+	let contents: string;
+
+	try {
+		contents = await readFile(manifestPath, "utf8");
+	} catch (cause) {
+		const error = cause as NodeJS.ErrnoException | undefined;
+		if (error?.code === "ENOENT" || error?.code === "EISDIR") {
+			return ok(null);
+		}
+		return err(
+			`Failed to read ${manifestPath}: ${error?.message ?? "unknown error"}`,
+		);
+	}
+
+	const parsed = parseLenientJson(contents);
+	if (!parsed.ok) {
+		return err(`Failed to parse ${manifestPath}: ${parsed.error}`);
+	}
+
+	if (!isRecord(parsed.data)) {
+		return err(`Invalid manifest structure at ${manifestPath}`);
+	}
+
+	const name = parsed.data.name;
+	const version = parsed.data.version;
+	if (typeof name !== "string" || name.length === 0) {
+		return err(`Missing package name in ${manifestPath}`);
+	}
+	if (typeof version !== "string" || version.length === 0) {
+		return err(`Missing package version in ${manifestPath}`);
+	}
+
+	return ok({
+		ecosystem: DEPENDENCY_ECOSYSTEM_NPM,
+		name,
+		version,
+	});
+};
+
+/**
+ * Determine whether the provided value is a plain object record.
+ */
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+	return typeof value === "object" && value !== null;
 };
 
 /**
@@ -217,3 +444,6 @@ const describeCliArgsError = (error: ParseScannerCliArgsError): string => {
  * Default scanner instance used by Bun.
  */
 export const scanner = createScanner();
+import type { Dirent } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";

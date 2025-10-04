@@ -52,11 +52,14 @@ export const summarizeQueryBatchResponse = (
 	}
 
 	const summaries: OsvApiQueryBatchSummaryEntry[] = response.results.map(
-		(result, index) => ({
-			coordinate: coordinates[index]!,
-			vulnerabilityIds: result.vulns.map((entry) => entry.id),
-			nextPageToken: result.next_page_token ?? null,
-		}),
+		(result, index) => {
+			const vulnerabilities = result.vulns ?? [];
+			return {
+				coordinate: coordinates[index]!,
+				vulnerabilityIds: vulnerabilities.map((entry) => entry.id),
+				nextPageToken: result.next_page_token ?? null,
+			};
+		},
 	);
 
 	return ok(summaries);

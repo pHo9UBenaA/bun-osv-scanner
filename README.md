@@ -86,6 +86,10 @@ Run the full suite (foundation, core, ports, adapters, app, boot) with:
 bun test
 ```
 
+## Examples
+
+Developing against Bun's security provider APIs often requires a live consumer. The `examples/` directory contains minimal projects wired for `bun link` so you can validate the REST and CLI scanner modes without publishing. Follow `examples/README.md` for step-by-step usage.
+
 ## Publishing Your Provider
 
 Publish your security scanner to npm:
