@@ -394,16 +394,16 @@ export const createScanner = (
           );
           const pkgSet = new Set(packages.map((p) => `${p.name}@${p.version}`));
           let mismatch = false;
-            if (lockSet.size !== pkgSet.size) {
-              mismatch = true;
-            } else {
-              for (const k of pkgSet) {
-                if (!lockSet.has(k)) {
-                  mismatch = true;
-                  break;
-                }
+          if (lockSet.size !== pkgSet.size) {
+            mismatch = true;
+          } else {
+            for (const k of pkgSet) {
+              if (!lockSet.has(k)) {
+                mismatch = true;
+                break;
               }
             }
+          }
           if (mismatch) {
             // Convert provided packages to coordinates and scan them directly.
             const conversion = packagesToCoordinates(packages);
@@ -418,13 +418,15 @@ export const createScanner = (
             advisoriesResult = await securityService.scanCoordinates(
               conversion.data
             );
-            staleWarn = {
-              level: "warn",
-              package: "bun.lock",
-              url: null,
-              description:
-                "Lock contents differ from provided package list (potentially stale lock)",
-            };
+            if (process.env.BUN_OSV_ENABLE_STALE_LOCK_WARN === "1") {
+              staleWarn = {
+                level: "warn",
+                package: "bun.lock",
+                url: null,
+                description:
+                  "Lock contents differ from provided package list (potentially stale lock)",
+              };
+            }
           } else {
             // Perfect match: scan the lock as authoritative snapshot.
             advisoriesResult = await securityService.scan(lockResult.data);
@@ -443,12 +445,13 @@ export const createScanner = (
           buildFatalAdvisory(describeServiceError(advisoriesResult.error)),
         ];
       }
-      // Only append the stale lock warning if there is at least one real advisory.
-      // Rationale: The simple sample tests expect a completely clean result for
-      // otherwise safe packages and treat the stale lock as ignorable noise.
-      const withStale = staleWarn && advisoriesResult.data.length > 0
-        ? [...advisoriesResult.data, staleWarn]
-        : advisoriesResult.data;
+      // Append stale lock warning only when:
+      //  - env flag explicitly enabled, and
+      //  - there is at least one vulnerability advisory (to avoid noisy singleton warn)
+      const withStale =
+        staleWarn && advisoriesResult.data.length > 0
+          ? [...advisoriesResult.data, staleWarn]
+          : advisoriesResult.data;
       const final = applyPolicy(withStale, runtimeConfig.policy);
       debug({
         phase: "pre-install-scan",
