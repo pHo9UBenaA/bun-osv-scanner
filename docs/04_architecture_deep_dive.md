@@ -27,26 +27,29 @@ This document provides a detailed exploration of the architectural patterns, des
               ▼
 ┌──────────────────────────────────────┐
 │         adapters/                    │  ← Impure Layer
-│  - osvScannerCli.ts                  │     (Side effects: I/O, spawn)
+│  - osvScannerApi.ts, osvScannerCli.ts│     (Side effects: HTTP, process)
 └─────────────┬────────────────────────┘
               │ depends on
               ▼
 ┌──────────────────────────────────────┐
 │           app/                       │  ← Orchestration Layer
 │  - securityService.ts                │     (Pure coordination logic)
+│  - configureScanner.ts               │
 └─────────────┬────────────────────────┘
               │ depends on
               ▼
 ┌──────────────────────────────────────┐
 │     ports/          core/            │  ← Abstraction + Logic Layers
 │  - osvScannerPort  - severity.ts     │     (Pure functions + interfaces)
-│                    - sbomGenerator.ts │
+│  - scannerConfigPort.ts - sbomGenerator.ts │
+│                    - osvApiTranslator.ts   │
 └─────────────┬────────────────────────┘
               │ depends on
               ▼
 ┌──────────────────────────────────────┐
 │         foundation/                  │  ← Utility Layer
 │  - bunLockParser.ts                  │     (Pure utilities, no deps)
+│  - sbomJson.ts, cliArgs.ts           │
 └──────────────────────────────────────┘
               │ depends on
               ▼
@@ -80,6 +83,8 @@ This document provides a detailed exploration of the architectural patterns, des
 
 **Files:**
 - `bunLockParser.ts` - Parse `bun.lock` JSON into dependency coordinates
+- `sbomJson.ts` - Parse CycloneDX SBOM JSON into coordinates (REST adapter)
+- `cliArgs.ts` - Parse CLI arguments into runtime configuration
 
 **Key characteristics:**
 - Zero dependencies on other layers
@@ -104,6 +109,7 @@ export const parseBunLock = (
 
 **Files:**
 - `osvScannerPort.ts` - Interface for OSV scanning capability
+- `scannerConfigPort.ts` - Runtime configuration contract for adapter selection
 
 **Key characteristics:**
 - Only type definitions (interfaces)
@@ -128,6 +134,7 @@ export type OsvScannerPort = {
 **Files:**
 - `severity.ts` - Classify vulnerability severity
 - `sbomGenerator.ts` - Generate CycloneDX SBOM from coordinates
+- `osvApiTranslator.ts` - Translate REST responses into domain findings
 
 **Key characteristics:**
 - Pure functions (deterministic, no side effects)
@@ -152,6 +159,7 @@ export const classifyPackageSeverity = (
 
 **Files:**
 - `securityService.ts` - Main security scanning service
+- `configureScanner.ts` - Selects the appropriate adapter (REST vs CLI)
 
 **Key characteristics:**
 - Pure orchestration logic
@@ -177,10 +185,11 @@ export const createSecurityService = (deps: Dependencies) => ({
 **Purpose:** Implement ports with real I/O operations
 
 **Files:**
+- `osvScannerApi.ts` - Call OSV REST API via `fetch`
 - `osvScannerCli.ts` - Execute osv-scanner CLI via `Bun.spawn`
 
 **Key characteristics:**
-- Contains ALL side effects (file I/O, process execution, network)
+- Contains ALL side effects (HTTP fetch, file I/O, process execution)
 - Implements port interfaces
 - Depends on `ports/`, `core/`, `foundation/` (never `app/`)
 - Uses Bun APIs: `Bun.spawn()`, `writeFile()`, etc.
@@ -188,12 +197,24 @@ export const createSecurityService = (deps: Dependencies) => ({
 **Example:**
 
 ```typescript
+export const createOsvScannerApiAdapter = (deps: {
+  readonly fetch: typeof fetch;
+  readonly baseUrl: string;
+}) => ({
+  async scan(sbomJson) {
+    const coordinates = parseCycloneDxJson(sbomJson); // foundation
+    const batch = await deps.fetch(`${deps.baseUrl}/v1/querybatch`, {...});
+    const vulns = await hydrateDetails(batch, deps.fetch);
+    return buildScanResultsBody("osv-rest-api", vulns);
+  }
+});
+
 export const createOsvScannerCliAdapter = (): OsvScannerPort => ({
   async scan(sbomJson) {
-    const tempFile = await createTempFile(sbomJson); // I/O
-    const process = Bun.spawn({ cmd: [...] });       // Side effect
-    const output = await readOutput(process);        // I/O
-    return parseJson(output);                        // Pure
+    const tempFile = await createTempFile(sbomJson);   // I/O
+    const process = Bun.spawn({ cmd: [...] });         // Side effect
+    const output = await readOutput(process);          // I/O
+    return parseJson(output);                          // Pure
   }
 });
 ```
@@ -215,8 +236,11 @@ export const createOsvScannerCliAdapter = (): OsvScannerPort => ({
 
 ```typescript
 export const createScanner = (options = {}): Bun.Security.Scanner => {
-  // Inject real adapters
-  const osvScanner = options.osvScanner ?? createOsvScannerCliAdapter();
+  // Parse CLI args and configure adapters (REST by default)
+  const config = options.runtimeConfig ?? parseScannerCliArgs(options.argv ?? []);
+  const osvScanner =
+    options.osvScanner ??
+    configureScanner(config.ok ? config.data : createDefaultRuntimeConfig());
   
   // Create app service
   const securityService = createSecurityService({
@@ -251,11 +275,12 @@ export const createScanner = (options = {}): Bun.Security.Scanner => {
    Input: DependencyCoordinate[]
    Output: SbomDocument (CycloneDX JSON)
    ↓
-5. adapters/osvScannerCli.ts: Invoke osv-scanner
-   - Write SBOM to temp file
-   - Spawn: osv-scanner scan source --format json -L <file>
-   - Read stdout
-   - Parse JSON
+5. adapters/osvScannerApi.ts (default): Call OSV REST API
+   - POST /v1/querybatch with dependency coordinates
+   - Follow `next_page_token` for pagination
+   - GET /v1/vulns/{id} to hydrate vulnerability details
+   - Translate payloads into `OsvScanResultsBody`
+   *CLI mode:* adapters/osvScannerCli.ts writes a temp file and spawns the `osv-scanner` binary
    Output: Result<OsvScanResultsBody, Error>
    ↓
 6. core/severity.ts: Classify severities
@@ -312,6 +337,26 @@ export const createScanner = (options = {}): Bun.Security.Scanner => {
    }
 ```
 
+#### OSV REST Request Failure
+
+```
+1-4. [Same as happy path]
+   ↓
+5. adapters/osvScannerApi.ts: POST /v1/querybatch / GET /v1/vulns/{id}
+   → Network error, non-2xx status, or invalid JSON payload
+   ↓
+6. Return err({ type: "network-error" | "invalid-status" | "invalid-json", ... })
+   ↓
+7. app/securityService.ts: Propagate error
+   ↓
+8. boot/scanner.ts: Convert to fatal advisory
+   {
+     level: "fatal",
+     package: "bun.lock",
+     description: "OSV scanner failed: HTTP 500"
+   }
+```
+
 ## Domain Model Deep Dive
 
 ### Core Domain Types
@@ -353,7 +398,7 @@ type OsvVulnerability = {
 ```
 
 **Usage:**
-- Returned by osv-scanner CLI
+- Returned by OSV (REST API or CLI)
 - Parsed in adapters layer
 - Classified by severity logic
 

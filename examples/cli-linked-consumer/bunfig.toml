@@ -1,0 +1,5 @@
+[install.security]
+scanner = "@pho9ubenaa/bun-osv-scanner"
+args = [
+  "--mode", "cli"
+]

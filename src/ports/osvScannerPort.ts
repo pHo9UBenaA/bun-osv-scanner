@@ -10,7 +10,14 @@ import type { Result } from "../types/result";
  */
 export type OsvScannerError =
 	| { readonly type: "process-failed"; readonly message: string }
-	| { readonly type: "decode-error"; readonly message: string };
+	| { readonly type: "decode-error"; readonly message: string }
+	| { readonly type: "network-error"; readonly message: string }
+	| {
+			readonly type: "invalid-status";
+			readonly status: number;
+			readonly body: string | null;
+	  }
+	| { readonly type: "invalid-json"; readonly message: string };
 
 /**
  * Represents the capability required to run an OSV scan on a serialized SBOM.

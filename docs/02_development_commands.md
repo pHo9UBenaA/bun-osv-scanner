@@ -195,6 +195,27 @@ Check the fixture to see example OSV scanner output:
 cat fixtures/osv/event-stream-osv.json
 ```
 
+### Configuring Scanner Modes
+
+The scanner supports REST (default) and CLI modes. Adjust behaviour by passing
+flags after the provider path:
+
+```bash
+bun install --security-provider ./dist/index.ts -- --mode rest --api-batch-size 32
+```
+
+Available flags:
+
+- `--mode <rest|cli>` – choose between the REST API adapter and the CLI adapter
+- `--api-base-url <url>` – override the OSV API host when running in REST mode
+- `--api-batch-size <number>` – change the `/v1/querybatch` chunk size (REST)
+- `--cli-command <arg>` – repeat to replace the CLI command tokens entirely
+- `--cli-cwd <path>` – run the CLI from a specific working directory
+- `--cli-temp-dir <path>` – write SBOM temp files into a specific directory
+
+Supplying an unknown or malformed flag yields a fatal advisory explaining the
+parse error so misconfiguration is surfaced immediately during installation.
+
 ### Testing OSV Scanner CLI Directly
 
 ```bash

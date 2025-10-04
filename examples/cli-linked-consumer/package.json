@@ -1,0 +1,9 @@
+{
+  "name": "@pho9ubenaa/bun-osv-scanner-example-cli",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "lodash": "0.9.2"
+  }
+}

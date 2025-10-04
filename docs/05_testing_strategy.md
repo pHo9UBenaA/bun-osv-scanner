@@ -40,13 +40,19 @@ src/
 │   ├── severity.ts
 │   ├── severity.test.ts
 │   ├── sbomGenerator.ts
-│   └── sbomGenerator.test.ts
+│   ├── sbomGenerator.test.ts
+│   ├── osvApiTranslator.ts
+│   └── osvApiTranslator.test.ts
 ├── adapters/
+│   ├── osvScannerApi.ts
+│   ├── osvScannerApi.test.ts
 │   ├── osvScannerCli.ts
 │   └── osvScannerCli.test.ts
 ├── app/
 │   ├── securityService.ts
-│   └── securityService.test.ts
+│   ├── securityService.test.ts
+│   ├── configureScanner.ts
+│   └── configureScanner.test.ts
 └── boot/
     ├── scanner.ts
     └── scanner.test.ts
@@ -146,6 +152,10 @@ describe("parseBunLock", () => {
 - Test edge cases (malformed input, empty values)
 - Use type guards (`if (!result.ok) return;`) for type safety
 
+**Additional foundation specs:**
+- `sbomJson.test.ts` validates CycloneDX parsing in both success and failure scenarios.
+- `cliArgs.test.ts` covers default REST configuration, CLI overrides, and validation errors.
+
 ### Core Layer: Unit Tests
 
 **Goal:** Test business logic without side effects
@@ -244,11 +254,45 @@ describe("classifyPackageSeverity", () => {
 - Test numeric thresholds (7.0, 4.0)
 - Test precedence (fatal > warn > null)
 
+**Additional core specs:**
+- `osvApiTranslator.test.ts` verifies pagination handling, empty findings, and translation into `OsvScanResultsBody` for the REST adapter.
+
 ### Adapters Layer: Integration Tests
 
 **Goal:** Test I/O adapters with controlled side effects
 
-**Example: `osvScannerCli.test.ts`**
+**Example (REST): `osvScannerApi.test.ts`**
+
+```typescript
+import { describe, expect, test } from "bun:test";
+import { createOsvScannerApiAdapter } from "./osvScannerApi";
+
+describe("createOsvScannerApiAdapter", () => {
+  test("hydrates paginated results", async () => {
+    const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const adapter = createOsvScannerApiAdapter({
+      fetch: async (input, init) => {
+        fetchCalls.push({ input, init });
+        return new Response(JSON.stringify({
+          results: [
+            { vulns: [{ id: "GHSA-123", modified: "2024-01-01T00:00:00Z" }] },
+          ],
+        }));
+      },
+      baseUrl: "https://api.osv.dev",
+      batchSize: 32,
+    });
+
+    const result = await adapter.scan('{"components": []}');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(fetchCalls[0]?.input).toContain("/v1/querybatch");
+  });
+});
+```
+
+**Example (CLI): `osvScannerCli.test.ts`**
 
 ```typescript
 import { describe, expect, test } from "bun:test";
@@ -331,10 +375,10 @@ describe("createOsvScannerCliAdapter", () => {
 ```
 
 **Key patterns:**
-- **Inject test doubles** - Replace `run` and `tempFiles` with stubs
-- **Capture arguments** - Verify correct CLI invocation
-- **Test error paths** - Non-zero exit codes, malformed output
-- **Avoid real I/O** - Use stub implementations
+- **Inject test doubles** - Replace `fetch`, `run`, and `tempFiles` with stubs
+- **Capture arguments** - Verify correct HTTP payloads and CLI invocations
+- **Test error paths** - Non-zero exit codes, HTTP errors, malformed output
+- **Avoid real I/O** - Use stub implementations for filesystem, network, and processes
 
 ### App Layer: Service Tests
 
@@ -428,6 +472,7 @@ describe("createSecurityService", () => {
 - **Stub all dependencies** - Control inputs/outputs
 - **Test happy path** - Verify full workflow
 - **Test error propagation** - Verify each error path
+- **Cover configuration wiring** - `configureScanner.test.ts` ensures REST defaulting and CLI overrides are respected
 
 ### Boot Layer: Integration Tests
 

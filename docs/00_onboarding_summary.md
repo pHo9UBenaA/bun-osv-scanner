@@ -30,7 +30,7 @@ bun-osv-scanner is a **security scanner plugin for Bun** that:
 |-----------|-----------|
 | Runtime | Bun (JavaScript/TypeScript runtime) |
 | Language | TypeScript (strict mode) |
-| External Tool | osv-scanner CLI |
+| Vulnerability Data | OSV REST API (default) / `osv-scanner` CLI (optional) |
 | Linter | Oxlint (Rust-based) |
 | Formatter | Biome |
 | Type Checker | tsgo + tsc |
@@ -46,7 +46,7 @@ bun-osv-scanner is a **security scanner plugin for Bun** that:
                │
 ┌──────────────▼──────────────────────┐
 │  adapters/  (Side Effects)          │
-│  osvScannerCli.ts                   │
+│  osvScannerApi.ts, osvScannerCli.ts │
 └──────────────┬──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
@@ -135,14 +135,31 @@ export const classifyPackageSeverity = (finding) => {
 };
 ```
 
-### 4. Adapter Example
+### 4. Adapter Examples
 ```typescript
+// src/adapters/osvScannerApi.ts
+export const createOsvScannerApiAdapter = ({ fetch, baseUrl }) => ({
+  scan: async (sbomJson) => {
+    // Calls OSV REST API using querybatch + vulns endpoints
+  }
+});
+
 // src/adapters/osvScannerCli.ts
 export const createOsvScannerCliAdapter = () => ({
   scan: async (sbomJson) => {
-    // Invokes osv-scanner CLI
+    // Invokes local `osv-scanner` CLI process
   }
 });
+```
+
+### 5. Runtime Configuration
+```typescript
+// src/app/configureScanner.ts
+export const configureScanner = (config) => {
+  return config.mode === "cli"
+    ? createOsvScannerCliAdapter(config.cli)
+    : createOsvScannerApiAdapter({ fetch, ...config.api });
+};
 ```
 
 ## Data Flow Example
@@ -153,8 +170,8 @@ export const createOsvScannerCliAdapter = () => ({
 2. Scanner reads `bun.lock` file
 3. Parser extracts dependency coordinates (name, version, ecosystem)
 4. Generator creates CycloneDX SBOM from coordinates
-5. Adapter invokes `osv-scanner` CLI with SBOM
-6. Parser extracts vulnerabilities from OSV output
+5. Adapter calls OSV REST API (or CLI when explicitly configured)
+6. Translator converts OSV response into domain findings
 7. Classifier determines severity (fatal/warn/null)
 8. Service builds advisory objects
 9. Scanner returns advisories to Bun
@@ -181,7 +198,7 @@ describe("functionName", () => {
 ### Testing Layers
 - **foundation/** - Unit tests, 100% coverage
 - **core/** - Unit tests, 100% coverage
-- **adapters/** - Integration tests with stubs
+- **adapters/** - Integration tests with stubs (REST + CLI adapters)
 - **app/** - Service tests with mocked dependencies
 - **boot/** - End-to-end tests
 
@@ -199,7 +216,7 @@ This project is designed to be migrated to Ruby on Rails. Key mappings:
 | `app/` | Service objects (`app/services/`) |
 | `boot/` | Initializers |
 | `Result<T, E>` | `dry-monads` gem |
-| osv-scanner CLI | OSV HTTP API |
+| OSV adapters | OSV HTTP API / CLI bridge |
 | `bun.lock` | `Gemfile.lock` |
 
 See [06_rails_migration_guide.md](./06_rails_migration_guide.md) for detailed guidance.

@@ -34,7 +34,10 @@ type CommandExecution = {
 /**
  * Abstraction over process execution for testability.
  */
-type RunCommand = (cmd: ReadonlyArray<string>) => Promise<CommandExecution>;
+type RunCommand = (
+	cmd: ReadonlyArray<string>,
+	options?: { readonly cwd?: string | null },
+) => Promise<CommandExecution>;
 
 /**
  * Represents a disposable temporary file.
@@ -58,6 +61,8 @@ export type OsvScannerCliOptions = {
 	readonly command?: ReadonlyArray<string>;
 	readonly run?: RunCommand;
 	readonly tempFiles?: TempFileManager;
+	readonly workingDirectory?: string | null;
+	readonly tempDirectory?: string | null;
 };
 
 /**
@@ -73,8 +78,13 @@ const streamToString = async (
 /**
  * Default implementation of the command runner using `Bun.spawn`.
  */
-const defaultRun: RunCommand = async (cmd) => {
-	const process = Bun.spawn({ cmd: [...cmd], stdout: "pipe", stderr: "pipe" });
+const defaultRun: RunCommand = async (cmd, options = {}) => {
+	const process = Bun.spawn({
+		cmd: [...cmd],
+		stdout: "pipe",
+		stderr: "pipe",
+		cwd: options.cwd ?? undefined,
+	});
 	const [stdout, stderr, exitCode] = await Promise.all([
 		streamToString(process.stdout),
 		streamToString(process.stderr),
@@ -86,10 +96,11 @@ const defaultRun: RunCommand = async (cmd) => {
 /**
  * Default temporary file manager writing into the OS temp directory.
  */
-const defaultTempFiles: TempFileManager = {
+const createDefaultTempFiles = (directory: string | null): TempFileManager => ({
 	async create(contents) {
 		const uniqueId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-		const path = join(tmpdir(), `osv-sbom-${uniqueId}.cdx.json`);
+		const baseDir = directory ?? tmpdir();
+		const path = join(baseDir, `osv-sbom-${uniqueId}.cdx.json`);
 		await writeFile(path, contents, "utf8");
 		return {
 			path,
@@ -98,7 +109,7 @@ const defaultTempFiles: TempFileManager = {
 			},
 		};
 	},
-};
+});
 
 /**
  * Extract JSON payload from a mixed stdout string.
@@ -133,13 +144,17 @@ export const createOsvScannerCliAdapter = (
 ): OsvScannerPort => {
 	const command = options.command ?? DEFAULT_COMMAND;
 	const run = options.run ?? defaultRun;
-	const tempFiles = options.tempFiles ?? defaultTempFiles;
+	const tempFiles =
+		options.tempFiles ?? createDefaultTempFiles(options.tempDirectory ?? null);
+	const workingDirectory = options.workingDirectory ?? null;
 
 	return {
 		async scan(sbomJson) {
 			const tempFile = await tempFiles.create(sbomJson);
 			try {
-				const execution = await run([...command, tempFile.path]);
+				const execution = await run([...command, tempFile.path], {
+					cwd: workingDirectory,
+				});
 
 				if (execution.exitCode !== 0) {
 					const errorMessage =

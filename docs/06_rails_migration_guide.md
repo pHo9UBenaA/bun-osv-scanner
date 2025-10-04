@@ -59,7 +59,7 @@ const process = Bun.spawn({ cmd: ["osv-scanner", ...] });
 response = HTTP.post("https://api.osv.dev/v1/querybatch", json: sbom)
 ```
 
-**Recommendation:** Use OSV's REST API instead of CLI for better Rails integration.
+**Recommendation:** Use OSV's REST API instead of CLI for better Rails integration (the Bun template already defaults to REST and keeps the CLI adapter as an opt-in path).
 
 ## Functional Programming in Ruby
 

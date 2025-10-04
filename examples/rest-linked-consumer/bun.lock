@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@pho9ubenaa/bun-osv-scanner-example-rest",
+      "dependencies": {
+        "lodash": "0.9.2",
+      },
+    },
+  },
+  "packages": {
+    "lodash": ["lodash@0.9.2", "", {}, "sha512-LVbt/rjK62gSbhehDVKL0vlaime4Y1IBixL+bKeNfoY4L2zab/jGrxU6Ka05tMA/zBxkTk5t3ivtphdyYupczw=="],
+  }
+}

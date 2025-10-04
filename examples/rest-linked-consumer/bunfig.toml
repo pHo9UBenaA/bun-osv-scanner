@@ -1,0 +1,6 @@
+[install.security]
+scanner = "@pho9ubenaa/bun-osv-scanner"
+args = [
+  "--mode", "rest",
+  "--api-base-url", "https://api.osv.dev"
+]

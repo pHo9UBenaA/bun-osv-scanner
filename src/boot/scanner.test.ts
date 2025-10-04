@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import type { SecurityService } from "../app/securityService";
+import {
+	DEFAULT_OSV_API_BASE_URL,
+	DEFAULT_OSV_API_BATCH_SIZE,
+} from "../foundation/cliArgs";
+import { createStubOsvScannerPort } from "../ports/osvScannerPort";
+import {
+	SCANNER_MODE_CLI,
+	SCANNER_MODE_REST,
+	type ScannerRuntimeConfig,
+} from "../ports/scannerConfigPort";
 import { err, ok } from "../types/result";
 import { createScanner } from "./scanner";
 
@@ -90,6 +100,75 @@ describe("scanner", () => {
 				package: "bun.lock",
 				url: null,
 				description: "OSV scanner failed: bad",
+			},
+		]);
+	});
+
+	test("configures REST adapter when no CLI args provided", async () => {
+		const captured: ScannerRuntimeConfig[] = [];
+		const scanner = createScanner({
+			readLock: async () => ok({}),
+			securityService: createStubService(ok([])),
+			configure: (config) => {
+				captured.push(config);
+				return createStubOsvScannerPort(ok({ results: [] }));
+			},
+		});
+
+		await scanner.scan({
+			packages: [{ name: "event-stream", version: "3.3.6" }],
+		});
+		expect(captured).toEqual([
+			{
+				mode: SCANNER_MODE_REST,
+				api: {
+					baseUrl: DEFAULT_OSV_API_BASE_URL,
+					batchSize: DEFAULT_OSV_API_BATCH_SIZE,
+				},
+				cli: {
+					command: null,
+					workingDirectory: null,
+					tempFileDirectory: null,
+				},
+			},
+		]);
+	});
+
+	test("configures CLI adapter when mode=cli is provided", async () => {
+		const captured: ScannerRuntimeConfig[] = [];
+		const scanner = createScanner({
+			readLock: async () => ok({}),
+			securityService: createStubService(ok([])),
+			argv: ["--mode", "cli"],
+			configure: (config) => {
+				captured.push(config);
+				return createStubOsvScannerPort(ok({ results: [] }));
+			},
+		});
+
+		await scanner.scan({
+			packages: [{ name: "event-stream", version: "3.3.6" }],
+		});
+		expect(captured[0]?.mode).toBe(SCANNER_MODE_CLI);
+	});
+
+	test("returns fatal advisory when CLI args parsing fails", async () => {
+		const scanner = createScanner({
+			readLock: async () => ok({}),
+			argv: ["--unknown"],
+			securityService: createStubService(ok([])),
+		});
+
+		const advisories = await scanner.scan({
+			packages: [{ name: "event-stream", version: "3.3.6" }],
+		});
+
+		expect(advisories).toEqual([
+			{
+				level: "fatal",
+				package: "bun.lock",
+				url: null,
+				description: "Invalid scanner arguments: unknown option --unknown",
 			},
 		]);
 	});

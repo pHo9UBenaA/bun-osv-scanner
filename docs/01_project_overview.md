@@ -41,13 +41,13 @@ The security scanner follows this workflow during `bun install`:
          │
          ▼
 ┌─────────────────────────────────┐
-│ 4. Invoke osv-scanner CLI       │
+│ 4. Call OSV REST API (default)  │
 │    → Query OSV.dev database     │
 └────────┬────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────┐
-│ 5. Parse OSV results            │
+│ 5. Translate OSV results        │
 │    → Map severities to levels   │
 └────────┬────────────────────────┘
          │
@@ -87,11 +87,13 @@ The scanner returns two types of advisories to Bun:
   - ESNext target
   - Bundler module resolution
 
-### External Tools
-- **osv-scanner CLI** - Google's official OSV scanner
-  - Must be installed separately: `brew install osv-scanner` (macOS)
-  - Invoked via `Bun.spawn()` to scan SBOM files
-  - Returns JSON-formatted vulnerability data
+### External Data Sources
+- **OSV REST API** - Primary source of vulnerability intelligence
+  - Queried via `POST /v1/querybatch` and `GET /v1/vulns/{id}`
+  - Supports pagination and incremental hydration of findings
+- **`osv-scanner` CLI** (optional) - Google's official scanner used as a fallback mode
+  - Install separately: `brew install osv-scanner`
+  - Invoked via `Bun.spawn()` when CLI mode is selected
 
 ### Code Quality Tools
 - **Oxlint** - Fast ESLint-compatible linter (written in Rust)
@@ -131,7 +133,7 @@ adapters (side effects)
 
 **Key rules:**
 - `foundation` and `core` contain only pure functions
-- `adapters` contain all side effects (file I/O, process execution)
+- `adapters` contain all side effects (HTTP fetch, process execution)
 - `ports` define abstract interfaces (dependency inversion)
 - `boot` wires everything together
 
@@ -154,8 +156,8 @@ This enables:
 ### 4. Schema-Lite Validation
 The scanner trusts inputs at strategic boundaries:
 - `bun.lock` parsing filters malformed entries silently
-- SBOM generation only emits fields consumed by `osv-scanner`
-- OSV JSON parsing relies on fixture-driven validation
+- SBOM generation only emits fields consumed by the scanners
+- OSV JSON parsing relies on fixture-driven validation covering REST payloads
 
 This avoids heavy schema libraries while maintaining safety.
 
@@ -171,12 +173,12 @@ This project is intended to be migrated to Ruby on Rails. Key considerations:
 
 ### Components to Replicate
 1. **SBOM generation** → Ruby gem for CycloneDX generation
-2. **OSV integration** → HTTP API calls instead of CLI (use OSV REST API)
+2. **OSV integration** → HTTP API calls using the REST adapter
 3. **Severity classification** → Business logic ported to Ruby
 4. **Dependency parsing** → Parse `Gemfile.lock` instead of `bun.lock`
 
 ### Differences to Consider
-- Bun uses CLI tool (`osv-scanner`); Rails should use REST API
+- Template defaults to OSV REST API but also includes a CLI adapter for parity
 - Node.js ecosystem → Ruby ecosystem (npm → RubyGems)
 - TypeScript types → Ruby type checking (Sorbet/RBS)
 - Bun's native integration → Custom Rails middleware or Bundler plugin
