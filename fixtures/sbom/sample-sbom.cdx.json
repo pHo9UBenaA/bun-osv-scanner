@@ -1,0 +1,13 @@
+{
+	"bomFormat": "CycloneDX",
+	"specVersion": "1.4",
+	"version": 1,
+	"components": [
+		{
+			"type": "library",
+			"name": "event-stream",
+			"version": "3.3.6",
+			"purl": "pkg:npm/event-stream@3.3.6"
+		}
+	]
+}
