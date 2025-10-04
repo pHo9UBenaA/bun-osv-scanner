@@ -7,6 +7,10 @@ OSV.dev (Open Source Vulnerability database) API の詳細仕様をまとめた�
 OSV.dev は Google が運営するオープンソースソフトウェアの脆弱性データベースです。
 RESTful API を通じて脆弱性情報を検索・取得することができます。
 
+## OpenAPI specification
+
+[osv_service_v1.swagger.json](./osv_service_v1.swagger.json)
+
 ## API エンドポイント一覧
 
 ### 安定版 API

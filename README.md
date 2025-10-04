@@ -13,10 +13,10 @@ and control whether installations proceed based on detected threats.
 When packages are installed via Bun, your security scanner:
 
 1. **Receives** package information (name, version)
-2. **Queries** your threat intelligence API
-3. **Validates** the response data
-4. **Categorizes** threats by severity
-5. **Returns** advisories to control installation (empty array if safe)
+2. **Translates** the local `bun.lock` into dependency coordinates
+3. **Generates** a CycloneDX SBOM from those coordinates
+4. **Calls** the local `osv-scanner` CLI to detect known advisories
+5. **Maps** OSV severity data to Bun advisory levels and returns the results
 
 ### Advisory Levels
 
@@ -35,42 +35,21 @@ If your `scan` function throws an error, it will be gracefully handled by Bun, b
 
 ### Validation
 
-When fetching threat feeds over the network, use schema validation  
-(e.g., Zod) to ensure data integrity. Invalid responses should fail immediately
-rather than silently returning empty advisories.
+The scanner performs schema-lite validation by working with trusted inputs:
 
-```typescript
-import {z} from 'zod';
-
-const ThreatFeedItemSchema = z.object({
-	package: z.string(),
-	version: z.string(),
-	url: z.string().nullable(),
-	description: z.string().nullable(),
-	categories: z.array(z.enum(['backdoor', 'botnet' /* ... */])),
-});
-```
+- `bun.lock` parsing filters out malformed package entries.
+- CycloneDX SBOM generation only emits the fields consumed by `osv-scanner`.
+- OSV JSON parsing is locked by fixtures under `fixtures/osv/`.
 
 ### Useful Bun APIs
 
-Bun provides several built-in APIs that are particularly useful for security scanner:
-
-- [**Security scanner API Reference**](https://bun.com/docs/install/security-scanner-api): Complete API documentation for security scanners
-- [**`Bun.semver.satisfies()`**](https://bun.com/docs/api/semver): Essential for checking if package versions match vulnerability ranges. No external dependencies needed.
-
-  ```typescript
-  if (Bun.semver.satisfies(version, '>=1.0.0 <1.2.5')) {
-  	// Version is vulnerable
-  }
-  ```
-
-- [**`Bun.hash`**](https://bun.com/docs/api/hashing#bun-hash): Fast hashing for package integrity checks
-- [**`Bun.file`**](https://bun.com/docs/api/file-io): Efficient file I/O, could be used for reading local threat databases
+- [**Security scanner API Reference**](https://bun.com/docs/install/security-scanner-api): API contract for Bun scanners
+- [**`Bun.file`**](https://bun.com/docs/api/file-io): Used to load `bun.lock`
+- [**`Bun.spawn`**](https://bun.com/docs/api/spawn): Powers the `osv-scanner` CLI adapter
 
 ## Testing
 
-This template includes tests for a known malicious package version.
-Customize the test file as needed.
+Run the full suite (foundation, core, ports, adapters, app, boot) with:
 
 ```bash
 bun test
