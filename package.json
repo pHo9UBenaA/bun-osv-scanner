@@ -1,42 +1,42 @@
 {
-	"name": "@pho9ubenaa/bun-osv-scanner",
-	"description": "A Bun plugin to scan for vulnerabilities using OSV",
-	"version": "1.0.0",
-	"author": "Komiya",
-	"contributors": [
-		"pHo9UBenaA <pho9ubenaa@gmail.com>"
-	],
-	"license": "MIT",
-	"exports": {
-		"./package.json": "./package.json",
-		".": "./src/index.ts"
-	},
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/acme/bun"
-	},
-	"keywords": [
-		"bun",
-		"security",
-		"provider"
-	],
-	"devDependencies": {
-		"@biomejs/biome": "^2.2.5",
-		"@types/bun": "latest",
-		"@typescript/native-preview": "^7.0.0-dev.20251004.1",
-		"oxlint": "^1.19.0",
-		"typescript": "^5.9.2"
-	},
-	"scripts": {
-		"test": "bun test",
-		"lint": "oxlint --tsconfig ./tsconfig.json",
-		"lint:fix": "oxlint --tsconfig ./tsconfig.json --fix",
-		"typecheck": "tsgo",
-		"typecheck:tsc": "tsc --noEmit",
-		"format": "biome format --write .",
-		"check": "biome check ."
-	},
-	"module": "src/index.ts",
-	"type": "module",
-	"private": true
+  "name": "@pho9ubenaa/bun-osv-scanner",
+  "description": "A Bun plugin to scan for vulnerabilities using OSV",
+  "version": "0.0.1",
+  "author": "Komiya",
+  "contributors": [
+    "pHo9UBenaA <pho9ubenaa@gmail.com>"
+  ],
+  "license": "MIT",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": "./src/index.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/acme/bun"
+  },
+  "keywords": [
+    "bun",
+    "security",
+    "provider"
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.5",
+    "@types/bun": "latest",
+    "@typescript/native-preview": "^7.0.0-dev.20251004.1",
+    "oxlint": "^1.19.0",
+    "typescript": "^5.9.2"
+  },
+  "scripts": {
+    "test": "bun test",
+    "lint": "oxlint --tsconfig ./tsconfig.json",
+    "lint:fix": "oxlint --tsconfig ./tsconfig.json --fix",
+    "typecheck": "tsgo",
+    "typecheck:tsc": "tsc --noEmit",
+    "format": "biome format --write .",
+    "check": "biome check ."
+  },
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true
 }

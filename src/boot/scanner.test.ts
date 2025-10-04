@@ -264,6 +264,7 @@ describe("scanner", () => {
           workingDirectory: null,
           tempFileDirectory: null,
         },
+        policy: { blockMinLevel: "fatal", allowUnsafe: false },
       },
     ]);
   });
@@ -305,5 +306,155 @@ describe("scanner", () => {
         description: "Invalid scanner arguments: unknown option --unknown",
       },
     ]);
+  });
+
+  test("emits warn advisory when lock differs from provided packages", async () => {
+    // Provide lock data with package A only, but packages array has A and B → mismatch
+    const lockMock = { packages: { A: { version: "1.0.0" } } };
+    const scanner = createScanner({
+      readLock: async () => ok(lockMock),
+      securityService: createStubService(ok([])),
+    });
+    const advisories = await scanner.scan({
+      packages: [
+        { name: "A", version: "1.0.0" },
+        { name: "B", version: "2.0.0" },
+      ],
+    });
+    expect(advisories).toEqual([
+      {
+        level: "warn",
+        package: "bun.lock",
+        url: null,
+        description:
+          "Lock contents differ from provided package list (potentially stale lock)",
+      },
+    ]);
+  });
+
+  test("escalates warn to fatal when --block-min-level=warn", async () => {
+    const scanner = createScanner({
+      readLock: async () => ok({}),
+      argv: ["--block-min-level", "warn"],
+      securityService: createStubService(
+        ok([
+          {
+            level: "warn",
+            package: "alpha",
+            url: null,
+            description: "weak",
+          },
+        ])
+      ),
+    });
+    const advisories = await scanner.scan({
+      packages: [{ name: "alpha", version: "1.0.0" }],
+    });
+    expect(advisories).toEqual([
+      {
+        level: "fatal",
+        package: "alpha",
+        url: null,
+        description: "weak",
+      },
+    ]);
+  });
+
+  test("downgrades fatal to warn when allow unsafe env set", async () => {
+    const original = process.env.BUN_OSV_SCANNER_ALLOW_UNSAFE;
+    process.env.BUN_OSV_SCANNER_ALLOW_UNSAFE = "1";
+    try {
+      const scanner = createScanner({
+        readLock: async () => ok({}),
+        securityService: createStubService(
+          ok([
+            {
+              level: "fatal",
+              package: "alpha",
+              url: null,
+              description: "critical vuln",
+            },
+          ])
+        ),
+      });
+      const advisories = await scanner.scan({
+        packages: [{ name: "alpha", version: "1.0.0" }],
+      });
+      expect(advisories).toEqual([
+        {
+          level: "warn",
+          package: "alpha",
+          url: null,
+          description: "critical vuln",
+        },
+      ]);
+    } finally {
+      process.env.BUN_OSV_SCANNER_ALLOW_UNSAFE = original;
+    }
+  });
+
+  test("debug logging disabled by default", async () => {
+    const original = process.env.BUN_OSV_DEBUG;
+    delete process.env.BUN_OSV_DEBUG;
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      if (typeof message === "string") logs.push(message);
+    };
+    try {
+      const scanner = createScanner({
+        readLock: async () => err({ type: "lock-not-found" }),
+        securityService: createStubService(
+          ok([]),
+          ok([
+            {
+              level: "warn",
+              package: "alpha",
+              url: null,
+              description: "weak",
+            },
+          ])
+        ),
+      });
+      await scanner.scan({ packages: [{ name: "alpha", version: "1.0.0" }] });
+      expect(logs.length).toBe(0);
+    } finally {
+      process.env.BUN_OSV_DEBUG = original;
+      console.log = originalLog;
+    }
+  });
+
+  test("debug logging emits JSON line when enabled", async () => {
+    const original = process.env.BUN_OSV_DEBUG;
+    process.env.BUN_OSV_DEBUG = "1";
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      if (typeof message === "string") logs.push(message);
+    };
+    try {
+      const scanner = createScanner({
+        readLock: async () => err({ type: "lock-not-found" }),
+        securityService: createStubService(
+          ok([]),
+          ok([
+            {
+              level: "warn",
+              package: "beta",
+              url: null,
+              description: "weak",
+            },
+          ])
+        ),
+      });
+      await scanner.scan({ packages: [{ name: "beta", version: "2.0.0" }] });
+      expect(logs.length).toBeGreaterThanOrEqual(1);
+      const parsed = JSON.parse(logs[0] ?? "{}");
+      expect(parsed.phase).toBe("pre-install-scan");
+      expect(typeof parsed.packages).toBe("number");
+    } finally {
+      process.env.BUN_OSV_DEBUG = original;
+      console.log = originalLog;
+    }
   });
 });

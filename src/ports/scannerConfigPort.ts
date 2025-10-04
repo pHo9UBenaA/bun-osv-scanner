@@ -41,4 +41,10 @@ export type ScannerRuntimeConfig = {
 	readonly mode: ScannerMode;
 	readonly api: ScannerRestConfig;
 	readonly cli: ScannerCliConfig;
+	readonly policy?: {
+		/** Minimum level that triggers a block. Default 'fatal'. If 'warn', escalate warns to fatal. */
+		readonly blockMinLevel: "fatal" | "warn";
+		/** Allow unsafe override: when true downgrade fatal -> warn after policy. */
+		readonly allowUnsafe: boolean;
+	};
 };

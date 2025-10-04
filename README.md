@@ -83,6 +83,50 @@ Available flags:
 Invalid flags return a *fatal* advisory with a descriptive error message so the
 failure is visible during installation.
 
+## Policy & Flags
+
+The scanner applies a deterministic transformation pipeline to raw advisories:
+
+1. Base advisories collected (lock or direct package coordinates)
+2. (Optional) Stale lock warning appended if `bun.lock` entries differ from the provided package list
+3. Escalation: if minimum blocking level is set to `warn`, all warn advisories are escalated to fatal
+4. Unsafe downgrade: if emergency override enabled, fatal advisories are downgraded back to warn
+
+Environment variables / CLI options:
+
+| Control | Purpose | Default | Effect |
+|---------|---------|---------|--------|
+| `--block-min-level <fatal|warn>` / `BUN_OSV_BLOCK_MIN_LEVEL=warn` | Tighten policy to block on any warn-level advisory | `fatal` | Escalates every `warn` advisory to `fatal` causing an install block |
+| `BUN_OSV_SCANNER_ALLOW_UNSAFE=1` | Emergency bypass (last resort) | unset | Downgrades all fatal advisories to warn after escalation (still visible; may auto-cancel in non-TTY) |
+| (internal) Stale lock detection | Detect drift between lockfile and resolved packages | n/a | Adds a `warn` advisory (`bun.lock`) describing mismatch; never escalated beyond policy rules |
+
+Example: Block on all advisories (treat warn as fatal)
+```bash
+bun install --security-provider ./dist/index.ts -- --block-min-level warn
+```
+
+Example: Temporarily bypass blocking while collecting data (NOT recommended long-term)
+```bash
+BUN_OSV_SCANNER_ALLOW_UNSAFE=1 bun install --security-provider ./dist/index.ts
+```
+
+Example: Combine strict blocking with explicit REST settings
+```bash
+BUN_OSV_BLOCK_MIN_LEVEL=warn bun install --security-provider ./dist/index.ts -- --api-batch-size 50
+```
+
+Stale Lock Warning Semantics:
+- Emitted when the sorted set of `name@version` pairs from `bun.lock` differs from Bun's provided `packages` list.
+- Advisory level: `warn` (informational). Use it to prompt a lockfile refresh.
+- Will escalate to `fatal` only if `--block-min-level warn` is active (policy stage 3).
+
+Policy Order Recap:
+```
+collect -> append stale warn -> escalate (block-min-level) -> unsafe downgrade
+```
+
+This order ensures an operator can: (a) enforce strict blocking, (b) still receive drift visibility, and (c) override blocking only in emergency scenarios without losing advisory context.
+
 ### Error Handling
 
 If your `scan` function throws an error, it will be gracefully handled by Bun, but the installation process **will be cancelled** as a defensive precaution.

@@ -30,6 +30,7 @@ const KNOWN_OPTIONS = new Set([
 	"--cli-command",
 	"--cli-cwd",
 	"--cli-temp-dir",
+	"--block-min-level",
 ]);
 
 /**
@@ -86,6 +87,10 @@ export const parseScannerCliArgs = (
 	let cliCommand: string[] | null = null;
 	let cliWorkingDirectory: string | null = null;
 	let cliTempFileDirectory: string | null = null;
+
+	let blockMinLevel: "fatal" | "warn" =
+		process.env.BUN_OSV_BLOCK_MIN_LEVEL === "warn" ? "warn" : "fatal";
+	const allowUnsafe = process.env.BUN_OSV_SCANNER_ALLOW_UNSAFE === "1";
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const token = argv[index] ?? "";
@@ -148,6 +153,14 @@ export const parseScannerCliArgs = (
 				cliTempFileDirectory = value;
 				break;
 			}
+			case "--block-min-level": {
+				const v = value.toLowerCase();
+				if (v === "fatal" || v === "warn") {
+					blockMinLevel = v;
+					break;
+				}
+				return err({ type: CLI_ARGS_ERROR_UNKNOWN_OPTION, option });
+			}
 			default: {
 				return err({ type: CLI_ARGS_ERROR_UNKNOWN_OPTION, option });
 			}
@@ -164,6 +177,10 @@ export const parseScannerCliArgs = (
 			command: cliCommand,
 			workingDirectory: cliWorkingDirectory,
 			tempFileDirectory: cliTempFileDirectory,
+		},
+		policy: {
+			blockMinLevel,
+			allowUnsafe,
 		},
 	});
 };

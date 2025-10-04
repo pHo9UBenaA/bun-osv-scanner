@@ -8,20 +8,20 @@
  */
 
 import {
-  DEPENDENCY_ECOSYSTEM_NPM,
-  type DependencyCoordinate,
+	DEPENDENCY_ECOSYSTEM_NPM,
+	type DependencyCoordinate,
 } from "../types/dependency";
 import { err, ok, type Result } from "../types/result";
 
 /** Represents validation errors for converting packages into coordinates. */
 export type PackagesToCoordinatesError = {
-  readonly type: "invalid-package-metadata";
-  readonly message: string;
+	readonly type: "invalid-package-metadata";
+	readonly message: string;
 };
 
 export type PackagesToCoordinatesResult = Result<
-  ReadonlyArray<DependencyCoordinate>,
-  PackagesToCoordinatesError
+	ReadonlyArray<DependencyCoordinate>,
+	PackagesToCoordinatesError
 >;
 
 /**
@@ -31,38 +31,38 @@ export type PackagesToCoordinatesResult = Result<
  * - Ecosystem fixed to npm (current scope)
  */
 export const packagesToCoordinates = (
-  packages: ReadonlyArray<Bun.Security.Package>
+	packages: ReadonlyArray<Bun.Security.Package>,
 ): PackagesToCoordinatesResult => {
-  if (packages.length === 0) {
-    return ok([]);
-  }
+	if (packages.length === 0) {
+		return ok([]);
+	}
 
-  const seen = new Set<string>();
-  const coordinates: DependencyCoordinate[] = [];
+	const seen = new Set<string>();
+	const coordinates: DependencyCoordinate[] = [];
 
-  for (const pkg of packages) {
-    const name = pkg?.name;
-    const version = pkg?.version;
+	for (const pkg of packages) {
+		const name = pkg?.name;
+		const version = pkg?.version;
 
-    if (typeof name !== "string" || name.length === 0) {
-      return err({
-        type: "invalid-package-metadata",
-        message: "Package missing name field",
-      });
-    }
-    if (typeof version !== "string" || version.length === 0) {
-      return err({
-        type: "invalid-package-metadata",
-        message: `Package ${name} missing version field`,
-      });
-    }
+		if (typeof name !== "string" || name.length === 0) {
+			return err({
+				type: "invalid-package-metadata",
+				message: "Package missing name field",
+			});
+		}
+		if (typeof version !== "string" || version.length === 0) {
+			return err({
+				type: "invalid-package-metadata",
+				message: `Package ${name} missing version field`,
+			});
+		}
 
-    const key = `${name}@${version}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+		const key = `${name}@${version}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
 
-    coordinates.push({ ecosystem: DEPENDENCY_ECOSYSTEM_NPM, name, version });
-  }
+		coordinates.push({ ecosystem: DEPENDENCY_ECOSYSTEM_NPM, name, version });
+	}
 
-  return ok(coordinates);
+	return ok(coordinates);
 };

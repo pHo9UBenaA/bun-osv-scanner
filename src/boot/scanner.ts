@@ -1,5 +1,34 @@
 /**
  * @file Bootstraps the Bun security scanner with real adapters.
+ *
+ * @section Overview
+ * Wires concrete adapters (OSV REST/CLI) with the pure security service and exposes
+ * a Bun `Security.Scanner` implementation. The scanner enforces a strict
+ * pre-install verification: it receives the resolved package list from Bun
+ * (name + version) and blocks the install on fatal advisories before any
+ * package extraction or lifecycle script execution.
+ *
+ * @section Assumptions
+ * 1. Pre-Install Package List Timing: Bun supplies `packages` to `scan()` BEFORE
+ *    any package tarball is fetched, extracted, or postinstall script executed.
+ *    - Validation Procedure: see `docs/PREINSTALL_TIMING.md`.
+ *      Once executed, append a dated confirmation line here, e.g.:
+ *      "Assumption validated 2025-10-05 via PREINSTALL_TIMING procedure (marker absent at scan time)."
+ *      Assumption validated 2025-10-04 via PREINSTALL_TIMING manual procedure (marker file absent at scan invocation in local probe run).
+ * 2. Ecosystem Scope: Currently only npm packages are supported; all derived
+ *    coordinates use the `npm` ecosystem constant. Multi-ecosystem support will
+ *    require introducing an adapter layer and is OUT OF SCOPE for this milestone.
+ * 3. Legacy Filesystem Resolver: The recursive `node_modules` traversal is
+ *    deprecated and retained ONLY behind the env flag `BUN_OSV_ENABLE_FS_FALLBACK`
+ *    as an emergency rollback path. Planned removal target: v1.1.0.
+ *    Ref: #LEGACY-REMOVAL (placeholder issue id).
+ * 4. Policy Application Order: (a) base advisories -> (b) stale lock warn append
+ *    -> (c) escalation (block-min-level) -> (d) unsafe downgrade. Documented in README.
+ *
+ * @section Defensive Notes
+ * - If conversion of provided packages yields zero coordinates while the input
+ *   list was non-empty, a fatal advisory is emitted (internal invariant guard).
+ * - All debug logging is best-effort and must never throw.
  */
 
 import type { Dirent } from "node:fs";
@@ -95,8 +124,11 @@ const NODE_MODULES_DIRECTORY = "node_modules" as const;
 const PACKAGE_MANIFEST_FILENAME = "package.json" as const;
 
 /**
- * Legacy filesystem traversal dependency resolver. Deprecated: will be removed.
+ * Legacy filesystem traversal dependency resolver.
+ * DEPRECATED: Scheduled for removal in v1.1.0.
  * Guarded by env flag BUN_OSV_ENABLE_FS_FALLBACK for temporary rollback.
+ * TODO(#LEGACY-REMOVAL): Remove this implementation and associated env flag after
+ * one minor release cycle once pre-install path stability is confirmed.
  */
 const legacyFilesystemResolveDependencies: DependencyResolver = async ({
   packages,
@@ -239,6 +271,18 @@ export const createScanner = (
   return {
     version: "1",
     async scan({ packages }) {
+      const debug = (data: Record<string, unknown>) => {
+        if (process.env.BUN_OSV_DEBUG !== "1") return;
+        try {
+          // Minimal JSON line log with timestamp.
+          console.log(
+            JSON.stringify({ ts: Date.now(), ...data }, (_k, v) => v)
+          );
+        } catch {
+          // Swallow to avoid impacting install flow.
+        }
+      };
+
       if (cliArgsError) {
         return [
           buildFatalAdvisory(
@@ -255,6 +299,13 @@ export const createScanner = (
       if (!lockResult.ok) {
         if (lockResult.error.type === "lock-not-found") {
           const useLegacy = process.env.BUN_OSV_ENABLE_FS_FALLBACK === "1";
+          debug({
+            phase: "pre-install-scan",
+            packages: packages.length,
+            lockPresent: false,
+            legacyFallback: useLegacy,
+            staleLockWarn: false,
+          });
           if (useLegacy) {
             const resolved = await resolveDependencies({ packages });
             if (!resolved.ok) {
@@ -296,8 +347,26 @@ export const createScanner = (
               ),
             ];
           }
-          // TODO Phase 4: if BUN_OSV_SCANNER_ALLOW_UNSAFE=1 then downgrade fatal advisories to warn (policy override)
-          return advisoriesFromCoordinates.data;
+          if (packages.length > 0 && conversion.data.length === 0) {
+            return [
+              buildManifestFatalAdvisory(
+                "Internal error: no coordinates derived from non-empty package list"
+              ),
+            ];
+          }
+          const final = applyPolicy(
+            advisoriesFromCoordinates.data,
+            runtimeConfig.policy
+          );
+          debug({
+            phase: "pre-install-scan",
+            packages: packages.length,
+            lockPresent: false,
+            legacyFallback: false,
+            staleLockWarn: false,
+            advisories: final.length,
+          });
+          return final;
         }
         return [
           buildFatalAdvisory(
@@ -313,7 +382,54 @@ export const createScanner = (
         ];
       }
 
-      return advisoriesResult.data;
+      // Optional stale lock detection: compare lock-derived coords vs provided packages
+      // (Warn only; does not block.)
+      let staleWarn: Bun.Security.Advisory | null = null;
+      try {
+        const parsed = parseBunLock(lockResult.data);
+        if (parsed.ok) {
+          const lockSet = new Set(
+            parsed.data.map((c) => `${c.name}@${c.version}`)
+          );
+          const pkgSet = new Set(packages.map((p) => `${p.name}@${p.version}`));
+          let mismatch = false;
+          if (lockSet.size !== pkgSet.size) {
+            mismatch = true;
+          } else {
+            for (const k of pkgSet) {
+              if (!lockSet.has(k)) {
+                mismatch = true;
+                break;
+              }
+            }
+          }
+          if (mismatch) {
+            staleWarn = {
+              level: "warn",
+              package: "bun.lock",
+              url: null,
+              description:
+                "Lock contents differ from provided package list (potentially stale lock)",
+            };
+          }
+        }
+      } catch {
+        // Ignore diff failures; rely on normal advisory path
+      }
+
+      const withStale = staleWarn
+        ? [...advisoriesResult.data, staleWarn]
+        : advisoriesResult.data;
+      const final = applyPolicy(withStale, runtimeConfig.policy);
+      debug({
+        phase: "pre-install-scan",
+        packages: packages.length,
+        lockPresent: true,
+        legacyFallback: false,
+        staleLockWarn: Boolean(staleWarn),
+        advisories: final.length,
+      });
+      return final;
     },
   };
 };
@@ -467,3 +583,31 @@ const describeCliArgsError = (error: ParseScannerCliArgsError): string => {
  */
 export const scanner = createScanner();
 // (Removed duplicate imports appended by generator mistake)
+
+/**
+ * Apply policy transformations to advisory levels.
+ * - If blockMinLevel === 'warn': escalate all warn -> fatal (to block on any issue)
+ * - If allowUnsafe: downgrade fatal -> warn after escalation
+ */
+const applyPolicy = (
+  advisories: ReadonlyArray<Bun.Security.Advisory>,
+  policy: { blockMinLevel: "fatal" | "warn"; allowUnsafe: boolean } | undefined
+): ReadonlyArray<Bun.Security.Advisory> => {
+  if (!policy) return advisories;
+  let transformed = advisories;
+  if (policy.blockMinLevel === "warn") {
+    transformed = transformed.map((a) =>
+      a.level === "warn"
+        ? { ...a, level: "fatal" as const, description: a.description }
+        : a
+    );
+  }
+  if (policy.allowUnsafe) {
+    transformed = transformed.map((a) =>
+      a.level === "fatal"
+        ? { ...a, level: "warn" as const, description: a.description }
+        : a
+    );
+  }
+  return transformed;
+};
