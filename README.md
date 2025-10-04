@@ -10,14 +10,29 @@ and control whether installations proceed based on detected threats.
 
 ## How It Works
 
-When packages are installed via Bun, your security scanner:
+When packages are installed via Bun, your security scanner now enforces a strict
+"verify-before-install" model:
 
-1. **Receives** package information (name, version)
-2. **Translates** the local `bun.lock` into dependency coordinates
-3. **Generates** a CycloneDX SBOM from those coordinates
-4. **Scans** dependencies against OSV — defaulting to the REST API and falling
-   back to the `osv-scanner` CLI when requested
-5. **Maps** OSV severity data to Bun advisory levels and returns the results
+1. **Receives** the intended package list (name + version) from Bun *before any package is fetched or unpacked*
+2. **Attempts** to load and parse `bun.lock` (if present) for authoritative resolution
+3. **Falls back (secure path)** to the provided package list when `bun.lock` is absent — no filesystem traversal of `node_modules`
+4. **Generates** a minimal CycloneDX SBOM representation (lock-based path only)
+5. **Scans** dependency coordinates against OSV (REST by default, CLI when requested)
+6. **Maps** OSV severity data to Bun advisory levels and returns the results — blocking the install on fatal advisories
+
+### Removal of `node_modules` Traversal
+
+Earlier iterations walked the `node_modules` directory when `bun.lock` was missing. That introduced a time-of-check/time-of-use risk because packages (and their install scripts) could already have executed.
+
+This fallback has been **removed by default**. The scanner now derives coordinates exclusively from Bun's pre-install package list when no lockfile exists.
+
+If you encounter an unexpected environment that still requires the legacy behavior, you may temporarily re-enable it (deprecated) by setting:
+
+```bash
+BUN_OSV_ENABLE_FS_FALLBACK=1 bun install
+```
+
+This flag will be removed in a future release and should only be used for short-lived rollbacks.
 
 ### Advisory Levels
 
@@ -29,6 +44,14 @@ When packages are installed via Bun, your security scanner:
   - Examples: protestware, adware, deprecated packages
 
 All advisories are always displayed to the user regardless of level.
+
+### Planned Overrides & Policy Extensions
+
+The following environment controls are planned (not all may be active yet):
+
+- `BUN_OSV_SCANNER_ALLOW_UNSAFE=1` – Temporarily bypass blocking (downgrades fatal to warn). Use only in emergency situations.
+
+Always prefer fixing or pinning vulnerable versions over using overrides.
 
 ## Runtime Modes
 
