@@ -19,42 +19,42 @@ import { createScanner } from "./scanner";
  */
 
 describe("integration: blocks vulnerable package pre-install", () => {
-  test("emits fatal advisory for vulnerable package without lock", async () => {
-    const fatalAdvisory = {
-      level: "fatal" as const,
-      package: "left-pad",
-      url: "https://osv.dev/VULN-1",
-      description: "Critical vulnerability (simulated)",
-    };
+	test("emits fatal advisory for vulnerable package without lock", async () => {
+		const fatalAdvisory = {
+			level: "fatal" as const,
+			package: "left-pad",
+			url: "https://osv.dev/VULN-1",
+			description: "Critical vulnerability (simulated)",
+		};
 
-    const stubService: SecurityService = {
-      async scan() {
-        return ok([fatalAdvisory]);
-      },
-      async scanCoordinates(coords) {
-        // Ensure coordinates contain the vulnerable package as expected
-        const match = coords.some(
-          (c) => c.name === "left-pad" && c.version === "999.0.0"
-        );
-        if (!match) {
-          return err({
-            type: "osv-scan-error" as const,
-            error: { type: "process-failed", message: "coordinate mismatch" },
-          });
-        }
-        return ok([fatalAdvisory]);
-      },
-    };
+		const stubService: SecurityService = {
+			async scan() {
+				return ok([fatalAdvisory]);
+			},
+			async scanCoordinates(coords) {
+				// Ensure coordinates contain the vulnerable package as expected
+				const match = coords.some(
+					(c) => c.name === "left-pad" && c.version === "999.0.0",
+				);
+				if (!match) {
+					return err({
+						type: "osv-scan-error" as const,
+						error: { type: "process-failed", message: "coordinate mismatch" },
+					});
+				}
+				return ok([fatalAdvisory]);
+			},
+		};
 
-    const scanner = createScanner({
-      readLock: async () => err({ type: "lock-not-found" }),
-      securityService: stubService,
-    });
+		const scanner = createScanner({
+			readLock: async () => err({ type: "lock-not-found" }),
+			securityService: stubService,
+		});
 
-    const advisories = await scanner.scan({
-      packages: [{ name: "left-pad", version: "999.0.0" }],
-    });
+		const advisories = await scanner.scan({
+			packages: [{ name: "left-pad", version: "999.0.0" }],
+		});
 
-    expect(advisories).toEqual([fatalAdvisory]);
-  });
+		expect(advisories).toEqual([fatalAdvisory]);
+	});
 });

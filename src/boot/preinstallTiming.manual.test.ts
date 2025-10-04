@@ -10,10 +10,10 @@ import { describe, expect, test } from "bun:test";
  */
 
 describe("manual: pre-install timing validation", () => {
-  test("packages list provided prior to extraction & postinstall (validated 2025-10-04)", () => {
-    // If this expectation fails, the dated confirmation in scanner.ts was removed
-    // or changed—re-run PREINSTALL_TIMING.md procedure.
-    const confirmed = true; // marker derived from manual validation record
-    expect(confirmed).toBe(true);
-  });
+	test("packages list provided prior to extraction & postinstall (validated 2025-10-04)", () => {
+		// If this expectation fails, the dated confirmation in scanner.ts was removed
+		// or changed—re-run PREINSTALL_TIMING.md procedure.
+		const confirmed = true; // marker derived from manual validation record
+		expect(confirmed).toBe(true);
+	});
 });
